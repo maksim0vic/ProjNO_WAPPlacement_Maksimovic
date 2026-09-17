@@ -1,0 +1,18 @@
+<?xml version='1.0'?>
+<DevRes regionals="Common/Regionals"
+		displayName="WiFi AP Placement Optimization"
+		maintainer="Anđela Maksimović" 
+		email="amaksimovi1@etf.unsa.ba"
+		comment="Simple demonstration of Gradient Descent with line search.">
+	<Langs>
+		<Lang id="EN" name="English"/>
+	</Langs>
+	<ArtWork>
+		<Config path="Common/ResConfigs/natGUI.xml"/>
+		<Config path=":main.xml"/>
+	</ArtWork>
+	<Translation>
+		<Config path="Common/ResConfigs/tr/%s/natGUI.xml"/>
+		<Config path=":tr/main_%s.xml"/>
+	</Translation>
+</DevRes>
