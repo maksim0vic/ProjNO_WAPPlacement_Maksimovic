@@ -1,0 +1,517 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+\title{
+    \textbf{\LARGE WiFi Access Point Placement}\\
+    \textbf{\LARGE Using Gradient Descent with Backtracking Line Search}\\[0.2cm]
+    \large Numerical Optimization - Project Report
+}
+
+\author{
+    \large Anđela Maksimović 20009
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report presents a numerical optimization approach for placing a
+fixed number of wireless access points (APs) inside a building in order
+to maximize signal coverage. The problem is formulated as a constrained
+nonlinear optimization problem, where the decision variables are the
+coordinates of the APs. A projected gradient ascent method is used to
+solve the problem, with the gradient estimated using central finite
+differences and the step size selected using a backtracking line
+search. The building is represented as a two-dimensional grid, allowing
+walls and obstacles to be included through signal attenuation. An
+interactive implementation is also provided to visualize the floor
+plan, AP positions, coverage, and optimization process. The main goal
+of the project is to demonstrate the application and behavior of a
+gradient-based numerical optimization method on a practical,
+non-convex problem.
+\end{abstract}
+
+\tableofcontents
+
+% ==================================================================
+\section{Introduction and Background}
+% ==================================================================
+
+The placement of wireless access points is an important part of
+designing a WiFi network. The locations of the access points affect the
+area that can be covered and the quality of the received signal. When a
+building contains multiple rooms, corridors, and obstacles, finding
+suitable AP locations manually becomes more difficult.
+
+The problem can be viewed as an optimization problem in which the
+positions of a fixed number of APs are changed in order to maximize a
+coverage measure. Similar wireless network optimization problems have
+been studied using different objectives and optimization methods.
+Coverage and signal propagation are among the most common objectives,
+while other approaches consider throughput and load balancing
+\cite{mcgibney2007user}, channel assignment
+\cite{lee2002optimization}, or localization accuracy
+\cite{battiti2003optimal}.
+
+From an optimization perspective, AP placement can be approached in
+several ways. Gradient-based methods use information about how the
+objective changes when the decision variables are modified; for
+example, differentiable formulations of cellular network throughput
+have been optimized directly through gradient descent
+\cite{eller2024differentiable}. Classical methods such as gradient
+descent, gradient ascent, quasi-Newton, and conjugate-gradient methods
+belong to this group. Other approaches are more suitable when the
+problem is discrete or when gradient information is not available.
+These include direct-search methods and metaheuristics such as
+genetic algorithms, simulated annealing, and tabu search \cite{molina1999automatic}.
+
+For this project, a gradient-based approach was selected because it
+provides a direct way to study several concepts from numerical
+optimization. In particular, the project considers numerical gradient
+estimation, constrained optimization through projection, and
+backtracking line search for selecting the step size. Since the
+resulting problem is non-convex, the algorithm is expected to find a
+local optimum rather than necessarily the global optimum.
+
+\subsection{Related implementations}
+
+Several existing implementations were considered when designing the
+problem and its visualization.
+
+\begin{itemize}
+    \item \textbf{WSN-Optimization-using-GA} uses a genetic algorithm for wireless sensor network placement and
+    provides a useful comparison with a gradient-based approach \cite{wsn_ga}.
+
+    \item \textbf{plexus-network-planner}
+    was used as inspiration for the interactive floor-plan
+    visualization, particularly the idea of displaying AP positions
+    and coverage directly on a building layout \cite{plexus_planner}.
+
+    \item \textbf{Wireless-Access-Point-Optimization}
+    was considered as a reference for AP placement and coverage
+    calculation \cite{wap_optimization}.
+\end{itemize}
+
+These projects were used as references for the general problem and
+visualization. The optimization procedure used in this project was
+implemented separately.
+
+% ==================================================================
+\section{Problem Statement}
+% ==================================================================
+
+The objective of the project is to determine the placement of a fixed
+number of wireless access points inside a building in order to maximize
+signal coverage.
+
+The decision variables are the coordinates of the APs. For $n$ access
+points, the optimization variable is
+
+\[
+u=(x_1,y_1,\ldots,x_n,y_n),
+\]
+
+where $(x_i,y_i)$ represents the position of access point $i$.
+
+The problem is constrained because an AP cannot be placed outside the
+building or inside a wall or obstacle. The resulting optimization
+landscape is non-convex and may contain multiple local optima. This
+means that different initial AP configurations can lead to different
+final solutions.
+
+% ==================================================================
+\section{Optimization Model}
+% ==================================================================
+
+\subsection{Floor-plan representation}
+
+The building is represented using a two-dimensional grid. Each grid
+cell describes a part of the environment and is classified as
+\texttt{Outside}, \texttt{Free}, \texttt{Wall}, or \texttt{Obstacle}.
+Only \texttt{Free} cells are valid positions for an AP.
+
+This representation allows the building layout to be used directly by
+the optimization procedure. Different floor plans can be generated
+with different spatial structures, including open rooms, corridors,
+L-shaped layouts, and multi-room office-complex layouts (kitchen,
+meeting room, and open workspace connected through partition
+doorways). This makes it possible to test the optimization method
+under different constraints and non-convex geometries.
+
+Each cell also contains an attenuation coefficient
+$\alpha(g_x,g_y)\geq0$, which represents the effect of walls or other
+obstacles on the signal.
+
+
+
+\subsection{Coverage objective}
+
+The signal contributions from multiple APs are combined to obtain the
+coverage of a grid point. Assuming independent coverage contributions,
+the probability that a point $q$ is covered by at least one AP is
+
+\[
+C(u,q)=1-\prod_{i=1}^{n}(1-s_i(u,q)).
+\]
+
+The total coverage over all free cells $\mathcal{Q}$ is then
+
+\[
+g(u)=\sum_{q\in\mathcal{Q}}C(u,q).
+\]
+
+To discourage APs from being placed too close to each other, a
+repulsion penalty is added. The minimum desired distance between two
+APs is defined as
+
+\[
+d_{\min}=0.8R(n).
+\]
+
+The final objective function is
+
+\[
+f(u)=g(u)
+-\sum_{i<j}
+2\big(d_{\min}-\lVert u_i-u_j\rVert_2\big)^2
+\mathbb{1}\!\left[
+0<\lVert u_i-u_j\rVert_2<d_{\min}
+\right].
+\]
+
+The optimization problem is therefore
+
+\[
+\max_{u\in\mathcal{F}} f(u),
+\]
+
+where $\mathcal{F}$ represents all valid AP placements inside the
+building.
+
+The objective is non-convex because of the nonlinear signal model,
+coverage combination, and repulsion term. In addition, the feasible
+region created by the floor plan is generally non-convex and can
+contain disconnected areas. As a result, the optimization method is
+not expected to provide a guarantee of a global optimum.
+
+% ==================================================================
+\section{Numerical Method}
+% ==================================================================
+\subsection{Signal model}
+
+Since AP and evaluation points are continuous but the floor plan is
+discretized on a grid, the set of cells crossed by a line-of-sight ray
+is found using Bresenham's line-rasterization algorithm
+\cite{bresenham1965algorithm}, the standard technique for this problem
+in computer graphics. The total attenuation along
+this line is calculated as
+
+\[
+A(p,q)=
+\sum_{(g_x,g_y)\in\text{Bresenham}(p,q)}
+\alpha(g_x,g_y).
+\]
+
+This provides a simple way of taking walls and obstacles into account
+when calculating the signal received at a particular grid cell.
+
+Each AP transmits at a fixed power, and the total power budget
+$P_{\text{tot}}$ available to the network is shared equally between
+the $n$ APs, so each AP transmits at $P_{\text{tot}}/n$. The effective
+range of a single AP is defined relative to a reference configuration:
+$P_0$ is the reference transmit power of one AP, and $R_0$ is the
+range that AP would achieve at that reference power. Since received
+power decreases with the square of distance, the range an AP can reach
+scales with the square root of its transmit power relative to this
+reference, so the effective range when $n$ APs share the power budget
+is
+
+\[
+R(n)=R_0\sqrt{\dfrac{P_{\text{tot}}/n}{P_0}}.
+\]
+
+Increasing the number of APs therefore reduces the effective range of
+each individual AP, reflecting the fact that the same total power is
+now split among more transmitters.
+
+For an AP at position $u_i$ and a grid point $q$, the distance is
+
+\[
+d_i=\lVert q-u_i\rVert_2.
+\]
+
+The signal contribution of AP $i$ is modeled as
+
+\[
+s_i(u,q)=
+\frac{1}{1+\exp\!\big(k(d_i-0.75R(n))\big)}
+e^{-A(u_i,q)},
+\qquad
+k=\frac{6}{R(n)}.
+\]
+
+The first part of the expression models the decrease in signal with
+distance, while the second part reduces the signal according to the
+attenuation caused by the floor-plan obstacles.
+
+\subsection{Projection onto the feasible region}
+
+A normal gradient step can move an AP into a wall or outside the
+building. To handle this constraint, the updated position is projected
+onto the feasible region after every gradient step.
+
+The projection is implemented using the floor-plan grid. Coordinates
+are first restricted to the floor-plan boundaries. If the resulting
+point is already inside a \texttt{Free} cell, it is kept unchanged.
+Otherwise, nearby cells are searched in expanding Chebyshev rings until
+a \texttt{Free} cell is found. The AP is then moved to the center of
+that cell.
+
+This is an approximate projection rather than an exact Euclidean
+projection, but it provides a simple way to keep every accepted AP
+position inside the valid part of the building.
+
+\subsection{Backtracking line search}
+
+The gradient provides the direction of the update, but an appropriate
+step size still has to be selected. A backtracking line search is used
+for this purpose.
+
+Starting with an initial step size $\alpha_0$, the step is repeatedly
+reduced according to
+
+\[
+\alpha\leftarrow0.7\alpha
+\]
+
+until the projected candidate satisfies the sufficient-increase
+condition
+
+\[
+u^+(\alpha)=
+\Pi_{\mathcal{F}}
+\big(u+\alpha\nabla f(u)\big),
+\]
+
+\[
+f(u^+(\alpha))
+\geq
+f(u)+c_1\alpha\lVert\nabla f(u)\rVert_2^2.
+\]
+
+The projection is performed before evaluating the condition. Therefore,
+a candidate is only accepted after it has been moved back into the
+feasible region.
+
+\subsection{Stopping criteria}
+
+The optimization stops when one of the following conditions is
+satisfied:
+
+\begin{itemize}
+    \item the gradient norm becomes smaller than $10^{-4}$;
+    \item the improvement in the objective becomes smaller than
+    $10^{-6}$;
+    \item no suitable step size can be found by the line search; or
+    \item the maximum number of 200 iterations is reached.
+\end{itemize}
+
+The objective value and step size are recorded during the optimization
+so that the convergence behavior can be inspected afterwards.
+
+\begin{algorithm}[H]
+\caption{Projected Gradient Ascent with Backtracking Line Search}
+\label{alg:gradient}
+\begin{algorithmic}[1]
+    \State $u\gets\Pi_{\mathcal F}(u_0)$
+    \State $v\gets f(u)$
+
+    \For{$k=0,\dots,K_{\max}-1$}
+        \State $\nabla\gets
+        \text{CentralDifferenceGradient}(f,u,\varepsilon)$
+
+        \If{$\lVert\nabla\rVert_2<\tau_g$}
+            \State \textbf{stop} (GradientNorm)
+        \EndIf
+
+        \State $\alpha\gets\alpha_0$
+        \State found $\gets$ false
+
+        \For{$b=1,\dots,B_{\max}$}
+            \State $u^+\gets
+            \Pi_{\mathcal F}(u+\alpha\nabla)$
+            \State $v^+\gets f(u^+)$
+
+            \If{$v^+\geq
+            v+c_1\alpha\lVert\nabla\rVert_2^2$}
+                \State found $\gets$ true
+                \State \textbf{break}
+            \EndIf
+
+            \State $\alpha\gets0.7\alpha$
+        \EndFor
+
+        \If{not found}
+            \State \textbf{stop} (LineSearchFailed)
+        \EndIf
+
+        \State $u\gets u^+$
+        \State $v\gets v^+$
+
+        \If{$v^+-v<\tau_f$}
+            \State \textbf{stop} (ObjectiveStall)
+        \EndIf
+    \EndFor
+
+    \State \Return $u$, $v$, iteration count, stopping reason,
+    histories
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Computational cost}
+
+Let $|\mathcal{Q}|$ denote the number of free cells and $L$ the average
+length of a rasterized line between an AP and a grid cell. One
+evaluation of the coverage objective requires approximately
+
+\[
+O(n|\mathcal{Q}|L)
+\]
+
+operations for the signal calculations and $O(n^2)$ operations for the
+repulsion term.
+
+There are $2n$ decision variables, and central finite differences
+require two objective evaluations for each variable. Therefore, one
+gradient calculation requires approximately $4n$ objective
+evaluations. The computational cost increases with both the number of
+APs and the resolution of the floor-plan grid.
+
+% ==================================================================
+\section{Implementation}
+% ==================================================================
+
+The project separates the numerical optimization core from the
+graphical interface used to visualize it. The floor plan, signal and
+coverage calculation, gradient estimation, projection, and
+optimization loop are implemented independently of any GUI code and
+operate purely on dense matrices (natID) and coordinate data. The interactive
+visualization layer, built with the \texttt{natid} GUI framework, only
+wraps this core: it displays the floor plan, current AP positions, and
+coverage information, and drives the optimizer through the same
+public interface used by any other caller. This separation means the
+optimization procedure can be exercised, tested, or reused
+independently of the GUI.
+
+The floor plan is generated as a two-dimensional grid, where each cell
+contains information about whether it can be occupied and, when
+appropriate, its attenuation value. The generator can create several
+structured layouts, such as open rooms, corridors, L-shaped
+environments, and multi-room office-complex layouts. These different
+layouts provide benchmark instances with different feasible regions
+and obstacle configurations.
+
+The generated floor plan is then passed directly to the optimization
+pipeline. This allows the same optimization method to be tested under
+different spatial constraints without changing the numerical
+procedure.
+
+For the grid representation, the occupancy and attenuation data are
+stored using dense matrix structures. This also makes it possible to
+save and load the attenuation data in MatrixMarket format when needed
+during development or analysis.
+
+The interactive part of the application displays the floor plan,
+current AP positions, and coverage information. The optimization
+history can also be used to observe how the objective and step size
+change during the iterations. The GUI is therefore mainly used to make
+the numerical method easier to inspect and understand.
+
+% ==================================================================
+\section{Optimization Behavior}
+% ==================================================================
+
+Because the optimization problem is non-convex, the starting positions
+of the APs can influence the final result. Starting the algorithm from
+different feasible configurations can lead to different local optima.
+
+This behavior can be observed using the interactive implementation.
+The AP positions can be randomized and the optimization can then be
+run again. Comparing different runs makes it possible to see how the
+initial configuration affects the final AP positions and the obtained
+coverage.
+
+The visualization is particularly useful for understanding the
+optimization process because the changes are not limited to the final
+objective value. The APs can be observed as they move through the
+feasible region, while the objective and step-size histories provide
+additional numerical information about the iterations.
+
+This also illustrates an important limitation of the chosen method.
+Projected gradient ascent uses local gradient information, so it does
+not guarantee that the global maximum will be found. For a non-convex
+problem such as this one, different initial configurations can result
+in different solutions.
+
+% ==================================================================
+\section{Conclusion}
+% ==================================================================
+
+This project formulates WiFi access point placement as a constrained,
+nonlinear optimization problem in which the coordinates of a fixed
+number of APs are optimized to maximize signal coverage. The building
+is represented as a two-dimensional grid, allowing the optimization to
+take walls, obstacles, and different floor-plan geometries into
+account.
+
+The problem is solved using projected gradient ascent with a numerical
+gradient and backtracking line search. Since the feasible region is
+defined by the floor-plan grid, a grid-based projection is used to keep
+the APs inside valid locations. The backtracking line search adapts the
+step size during the optimization, while the stopping criteria provide
+several ways of detecting convergence or termination.
+
+The implementation also provides an interactive way to observe the
+behavior of the algorithm. In particular, changing the initial AP
+positions demonstrates the effect of non-convexity and the possibility
+of converging to different local optima.
+
+Overall, the project demonstrates the use of a gradient-based numerical
+optimization method on a practical constrained problem. The main focus
+is not on finding a universally optimal WiFi placement strategy, but on
+showing how gradient estimation, projection, line search, and
+convergence criteria can be combined to solve and analyze a
+non-convex optimization problem.
+
+The application is cross-platform and runs natively on macOS, Linux,
+and Windows. Pre-built installers for all three platforms are
+published as GitHub releases\footnote{\url{https://github.com/maksim0vic/ProjNO_WAPPlacement_Maksimovic/releases}},
+allowing the tool to be tried directly without building it from
+source.
+
+\bibliographystyle{unsrt}  
+\bibliography{references}  
+
+\end{document}
